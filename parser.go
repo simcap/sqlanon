@@ -12,9 +12,7 @@ import (
 	"strings"
 )
 
-type null string
-
-var NULL = null("NULL")
+type ident string
 
 type dump struct {
 	insertIntos []*insert
@@ -40,7 +38,7 @@ func (i *insert) write(w io.Writer) {
 			w.Write([]byte(fmt.Sprintf("%f", v)))
 		case string:
 			w.Write([]byte(fmt.Sprintf("'%s'", v)))
-		case null:
+		case ident:
 			w.Write([]byte(fmt.Sprintf("%s", v)))
 		}
 		if index != len(i.values)-1 {
@@ -157,10 +155,7 @@ func scanInsert(s scanner.Scanner) (*insert, error) {
 			unquoted := lit[1 : len(lit)-1]
 			in.values = append(in.values, unquoted)
 		case token.IDENT:
-			switch lit {
-			case "NULL":
-				in.values = append(in.values, NULL)
-			}
+			in.values = append(in.values, ident(lit))
 		}
 	}
 }

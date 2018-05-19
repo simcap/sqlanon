@@ -19,7 +19,7 @@ func TestParser(t *testing.T) {
 	expected := &insert{
 		table:  "names",
 		fields: []string{"id", "\"language\"", "entity_type", "entity_id", "full_name", "first_name", "middle_name", "last_name", "alias", "abbreviation", "short_name", "prefix", "suffix"},
-		values: []interface{}{int64(1), "en-US", "affiliations", int64(1), "Major League Baseball", null, null, null, null, null, null, null, null},
+		values: []interface{}{int64(1), "en-US", "affiliations", int64(1), "Major League Baseball", ident("NULL"), ident("NULL"), ident("NULL"), ident("NULL"), ident("NULL"), ident("NULL"), ident("NULL"), ident("NULL")},
 	}
 	if got, want := inserts[0], expected; !reflect.DeepEqual(got, want) {
 		t.Fatalf("\ngot\n%#v\n\nwant\n%#v", got, want)
