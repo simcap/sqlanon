@@ -18,20 +18,43 @@ type dump struct {
 	insertIntos []*insert
 }
 
+type sqlField interface {
+	name() string
+	value() interface{}
+}
+
+type field struct {
+	n string
+	v interface{}
+}
+
+func (f *field) name() string       { return f.n }
+func (f *field) value() interface{} { return f.v }
+
 type insert struct {
 	table  string
-	fields []string
-	values []interface{}
+	fields []sqlField
+}
+
+func (i *insert) addField(name string, val interface{}) {
+	i.fields = append(i.fields, &field{n: name, v: val})
+}
+
+func (i *insert) names() (out []string) {
+	for _, f := range i.fields {
+		out = append(out, f.name())
+	}
+	return
 }
 
 func (i *insert) write(w io.Writer) {
 	w.Write([]byte("INSERT INTO "))
 	w.Write([]byte(i.table))
 	w.Write([]byte(" ("))
-	w.Write([]byte(strings.Join(i.fields, ", ")))
+	w.Write([]byte(strings.Join(i.names(), ", ")))
 	w.Write([]byte(") VALUES ("))
-	for index, v := range i.values {
-		switch v.(type) {
+	for index, f := range i.fields {
+		switch v := f.value().(type) {
 		case int64:
 			w.Write([]byte(fmt.Sprintf("%d", v)))
 		case float64:
@@ -41,7 +64,7 @@ func (i *insert) write(w io.Writer) {
 		case ident:
 			w.Write([]byte(fmt.Sprintf("%s", v)))
 		}
-		if index != len(i.values)-1 {
+		if index != len(i.fields)-1 {
 			w.Write([]byte(", "))
 		}
 	}
@@ -108,6 +131,7 @@ func scanInsert(s scanner.Scanner) (*insert, error) {
 		return in, fmt.Errorf("expecting left paren after table name got token %s with lit %q", tok, lit)
 	}
 
+	var names []string
 	for {
 		_, tok, lit := s.Scan()
 		if tok == token.RPAREN {
@@ -119,7 +143,7 @@ func scanInsert(s scanner.Scanner) (*insert, error) {
 		if tok == token.EOF {
 			return in, errWithinStatementEOF
 		}
-		in.fields = append(in.fields, lit)
+		names = append(names, lit)
 	}
 
 	if _, tok, lit := s.Scan(); tok != token.IDENT && lit != "VALUES" {
@@ -130,11 +154,10 @@ func scanInsert(s scanner.Scanner) (*insert, error) {
 		return in, errors.New("expecting left paren after VALUES")
 	}
 
+	var values []interface{}
 	for {
 		_, tok, lit := s.Scan()
 		switch tok {
-		case token.RPAREN:
-			return in, nil
 		case token.COMMA:
 			continue
 		case token.EOF:
@@ -144,18 +167,26 @@ func scanInsert(s scanner.Scanner) (*insert, error) {
 			if err != nil {
 				return in, errors.New("cannot convert int value")
 			}
-			in.values = append(in.values, i)
+			values = append(values, i)
 		case token.FLOAT:
 			f, err := strconv.ParseFloat(lit, 64)
 			if err != nil {
 				return in, errors.New("cannot convert float value")
 			}
-			in.values = append(in.values, f)
+			values = append(values, f)
 		case token.CHAR, token.STRING:
 			unquoted := lit[1 : len(lit)-1]
-			in.values = append(in.values, unquoted)
+			values = append(values, unquoted)
 		case token.IDENT:
-			in.values = append(in.values, ident(lit))
+			values = append(values, ident(lit))
+		case token.RPAREN:
+			if len(names) != len(values) {
+				return nil, fmt.Errorf("expecting same count of names and values to insert at names[%v] values[%v]", names, values)
+			}
+			for i, n := range names {
+				in.addField(n, values[i])
+			}
+			return in, nil
 		}
 	}
 }

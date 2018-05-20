@@ -11,10 +11,12 @@ import (
 
 var (
 	dumpFilepath string
+	dryRun       bool
 )
 
 func init() {
 	flag.StringVar(&dumpFilepath, "f", "", "SQL dump filepath")
+	flag.BoolVar(&dryRun, "d", false, "Dry run")
 }
 
 func main() {
@@ -36,6 +38,13 @@ func main() {
 		log.Fatal(err)
 	}
 
+	var anonymizer anonymizer
+	if dryRun {
+		anonymizer = new(noopAnonymizer)
+	} else {
+		anonymizer = new(stringScrambler)
+	}
+
 	scanner := bufio.NewScanner(dumpFile)
 	out := bufio.NewWriter(anonFile)
 	for scanner.Scan() {
@@ -46,6 +55,9 @@ func main() {
 			insertStmt, err := scanInsert(scan)
 			if err != nil {
 				log.Fatal(err)
+			}
+			for i, f := range insertStmt.fields {
+				insertStmt.fields[i] = anonymizer.anonymize(f)
 			}
 			insertStmt.write(out)
 		} else {
