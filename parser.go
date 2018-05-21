@@ -19,6 +19,10 @@ type dump struct {
 	columnDefinitions map[string]*column
 }
 
+func newDump() *dump {
+	return &dump{columnDefinitions: make(map[string]*column)}
+}
+
 type sqlField interface {
 	name() string
 	value() interface{}
@@ -107,7 +111,7 @@ func parseDump(filename string) (*dump, error) {
 	file := fset.AddFile(filename, fset.Base(), len(content))
 	s.Init(file, content, nil, 0)
 
-	d := &dump{columnDefinitions: make(map[string]*column)}
+	d := newDump()
 	for {
 		pos, tok, lit := s.Scan()
 		switch tok {

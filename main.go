@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -51,10 +52,39 @@ func main() {
 		anonymizer = new(stringScrambler)
 	}
 
-	scanner := bufio.NewScanner(dumpFile)
-	out := bufio.NewWriter(anonFile)
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	writer := newAnonWriter(dumpFile, anonFile, anonymizer)
+	writer.setDump(dump)
+
+	if err := writer.write(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+type anonWriter struct {
+	scanner *bufio.Scanner
+	out     *bufio.Writer
+	anon    anonymizer
+	dump    *dump
+}
+
+func newAnonWriter(original io.Reader, out io.Writer, anons ...anonymizer) *anonWriter {
+	w := &anonWriter{
+		scanner: bufio.NewScanner(original),
+		out:     bufio.NewWriter(out),
+		dump:    newDump(),
+		anon:    new(noopAnonymizer),
+	}
+	if len(anons) > 0 {
+		w.anon = anons[0]
+	}
+	return w
+}
+
+func (w *anonWriter) setDump(d *dump) { w.dump = d }
+
+func (w *anonWriter) write() error {
+	for w.scanner.Scan() {
+		line := w.scanner.Bytes()
 		if bytes.HasPrefix(line, []byte("INSERT INTO")) {
 			line := line[6:]
 			scan := newScanner(line)
@@ -64,17 +94,17 @@ func main() {
 			}
 			for i, f := range insertStmt.fields {
 				key := fmt.Sprintf("%s.%s", insertStmt.table, f.name())
-				if dump.columnDefinitions[key].category != timeCol {
-					insertStmt.fields[i] = anonymizer.anonymize(f)
+				if col, ok := w.dump.columnDefinitions[key]; ok && col.category != timeCol {
+					insertStmt.fields[i] = w.anon.anonymize(f)
 				}
 			}
-			insertStmt.write(out)
+			insertStmt.write(w.out)
 		} else {
-			if _, err := out.Write(scanner.Bytes()); err != nil {
+			if _, err := w.out.Write(w.scanner.Bytes()); err != nil {
 				log.Fatal(err)
 			}
 		}
-		out.Write([]byte("\n"))
+		w.out.Write([]byte("\n"))
 	}
-	out.Flush()
+	return w.out.Flush()
 }
