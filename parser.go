@@ -15,7 +15,8 @@ import (
 type ident string
 
 type dump struct {
-	insertIntos []*insert
+	insertIntos       []*insert
+	columnDefinitions map[string]*column
 }
 
 type sqlField interface {
@@ -30,6 +31,25 @@ type field struct {
 
 func (f *field) name() string       { return f.n }
 func (f *field) value() interface{} { return f.v }
+
+type colCategory uint
+
+const (
+	stringCol colCategory = iota
+	numberCol
+	timeCol
+	otherCol
+)
+
+type column struct {
+	name     string
+	category colCategory
+}
+
+type createStmt struct {
+	table   string
+	columns []*column
+}
 
 type insert struct {
 	table  string
@@ -87,7 +107,7 @@ func parseDump(filename string) (*dump, error) {
 	file := fset.AddFile(filename, fset.Base(), len(content))
 	s.Init(file, content, nil, 0)
 
-	d := new(dump)
+	d := &dump{columnDefinitions: make(map[string]*column)}
 	for {
 		pos, tok, lit := s.Scan()
 		switch tok {
@@ -101,6 +121,18 @@ func parseDump(filename string) (*dump, error) {
 				} else {
 					d.insertIntos = append(d.insertIntos, in)
 				}
+			case "CREATE":
+				pos, tok, lit := s.Scan()
+				if tok == token.IDENT && lit == "TABLE" {
+					stmt, err := scanCreateTable(s)
+					if err != nil {
+						return d, fmt.Errorf("scanning create table at %s: %s", fset.Position(pos), err)
+					}
+					for _, c := range stmt.columns {
+						key := fmt.Sprintf("%s.%s", stmt.table, c.name)
+						d.columnDefinitions[key] = c
+					}
+				}
 			}
 		}
 	}
@@ -113,6 +145,53 @@ func newScanner(line []byte) (s scanner.Scanner) {
 	file := fset.AddFile("", fset.Base(), len(line))
 	s.Init(file, line, nil, 0)
 	return
+}
+
+func scanCreateTable(s scanner.Scanner) (*createStmt, error) {
+	stmt := new(createStmt)
+	if _, tok, lit := s.Scan(); tok != token.IDENT {
+		return stmt, errors.New("expecting table name")
+	} else {
+		stmt.table = lit
+	}
+
+	if _, tok, lit := s.Scan(); tok != token.LPAREN {
+		return stmt, fmt.Errorf("expecting left paren after table name got token %s with lit %q", tok, lit)
+	}
+
+	current := new(column)
+start:
+	for {
+		_, tok, lit := s.Scan()
+		switch tok {
+		case token.EOF:
+			return stmt, errWithinStatementEOF
+		case token.IDENT, token.STRING:
+			current.name = lit
+			_, _, nextLit := s.Scan()
+			switch nextLit {
+			case "character", "text", "varchar", "char":
+				current.category = stringCol
+			case "integer", "smallint", "bigint", "decimal", "serial", "numeric", "real", "double precision", "bigserial":
+				current.category = numberCol
+			case "timestamp", "date", "time", "interval":
+				current.category = timeCol
+			}
+			for {
+				_, tok, _ := s.Scan()
+				switch tok {
+				case token.COMMA:
+					stmt.columns = append(stmt.columns, current)
+					current = new(column)
+					goto start
+				case token.SEMICOLON:
+					stmt.columns = append(stmt.columns, current)
+					current = new(column)
+					return stmt, nil
+				}
+			}
+		}
+	}
 }
 
 func scanInsert(s scanner.Scanner) (*insert, error) {
@@ -155,31 +234,35 @@ func scanInsert(s scanner.Scanner) (*insert, error) {
 	}
 
 	var values []interface{}
+	var current interface{}
 	for {
 		_, tok, lit := s.Scan()
 		switch tok {
-		case token.COMMA:
-			continue
 		case token.EOF:
 			return in, errWithinStatementEOF
+		case token.COMMA:
+			values = append(values, current)
+			current = nil
+			continue
 		case token.INT:
 			i, err := strconv.ParseInt(lit, 10, 64)
 			if err != nil {
 				return in, errors.New("cannot convert int value")
 			}
-			values = append(values, i)
+			current = i
 		case token.FLOAT:
 			f, err := strconv.ParseFloat(lit, 64)
 			if err != nil {
 				return in, errors.New("cannot convert float value")
 			}
-			values = append(values, f)
+			current = f
 		case token.CHAR, token.STRING:
-			unquoted := lit[1 : len(lit)-1]
-			values = append(values, unquoted)
+			current = lit[1 : len(lit)-1]
 		case token.IDENT:
-			values = append(values, ident(lit))
+			current = ident(lit)
 		case token.RPAREN:
+			values = append(values, current)
+			current = nil
 			if len(names) != len(values) {
 				return nil, fmt.Errorf("expecting same count of names and values to insert at names[%v] values[%v]", names, values)
 			}

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -22,6 +23,11 @@ func init() {
 func main() {
 	log.SetFlags(0)
 	flag.Parse()
+
+	dump, err := parseDump(dumpFilepath)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	dumpFile, err := os.Open(dumpFilepath)
 	if err != nil {
@@ -57,7 +63,10 @@ func main() {
 				log.Fatal(err)
 			}
 			for i, f := range insertStmt.fields {
-				insertStmt.fields[i] = anonymizer.anonymize(f)
+				key := fmt.Sprintf("%s.%s", insertStmt.table, f.name())
+				if dump.columnDefinitions[key].category != timeCol {
+					insertStmt.fields[i] = anonymizer.anonymize(f)
+				}
 			}
 			insertStmt.write(out)
 		} else {
